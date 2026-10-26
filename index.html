@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube Bulk Edits — find &amp; replace titles, descriptions, tags</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">YT</span>
+      <span class="brand-name">Bulk Edits</span>
+      <span class="ver">v1.0</span>
+    </div>
+    <div id="channelChip" class="chip hidden"></div>
+    <div id="quotaChip" class="chip" title="YouTube Data API quota resets at midnight Pacific"></div>
+    <span id="authModeChip" class="badge warn">Not connected</span>
+    <div class="topbar-actions">
+      <button id="btnDemo" class="btn sm" title="Load 12 sample videos and simulate writes — no account needed">Load demo data</button>
+      <button id="btnSignout" class="btn sm danger hidden">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============ 1. CONNECT ============ -->
+    <section class="card" id="secAuth">
+      <h2><span class="step">1</span> Connect</h2>
+
+      <div class="tabs" id="authTabs">
+        <button class="tab active" data-mode="helper">Local sign-in <em>recommended</em></button>
+        <button class="tab" data-mode="token">Paste access token</button>
+        <button class="tab" data-mode="code">Own OAuth client (code)</button>
+      </div>
+
+      <!-- A: helper -->
+      <div id="panel-helper" class="panel">
+        <p class="hint">One-click Google sign-in through <code>auth-helper.ps1</code> on <span class="mono">localhost:8787</span>. The helper keeps the client secret and refreshes your access token automatically, so long batches never die mid-run.</p>
+        <div class="row">
+          <button id="btnHelperSignin" class="btn primary" disabled>Sign in with Google</button>
+          <label class="field inline">Helper URL <input id="inpHelperUrl" type="text" value="http://localhost:8787" size="26"></label>
+        </div>
+        <div id="helperInfo" class="status"></div>
+
+        <div id="panel-helper-config" class="subpanel hidden">
+          <h4>Give the helper your OAuth client</h4>
+          <p class="hint">Saved to <code>auth-config.json</code> next to the helper script. See <code>SETUP.md</code> for creating these (5 minutes, one time).</p>
+          <div class="grid2">
+            <label class="field">Client ID <input id="inpHelperClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com"></label>
+            <label class="field">Client secret <input id="inpHelperClientSecret" type="password" placeholder="GOCSPX-..." autocomplete="off"></label>
+          </div>
+          <label class="field">Redirect URI <input id="inpHelperRedirect" type="text" placeholder="http://localhost:8787/callback"></label>
+          <button id="btnSaveHelperConfig" class="btn">Save to helper</button>
+        </div>
+      </div>
+
+      <!-- B: pasted token -->
+      <div id="panel-token" class="panel hidden">
+        <p class="hint">Fastest path, no Google Cloud project needed: open
+          <a id="lnkPlayground" href="https://developers.google.com/oauthplayground/" target="_blank" rel="noopener">Google OAuth Playground &#8599;</a>,
+          authorize the <code>.../auth/youtube</code> scope, click <em>Exchange authorization code for tokens</em>, and paste the <strong>access token</strong> here.</p>
+        <div class="row">
+          <textarea id="inpToken" rows="2" placeholder="ya29.a0..." spellcheck="false"></textarea>
+          <button id="btnUseToken" class="btn primary">Connect</button>
+        </div>
+        <p class="hint warn">Access tokens expire after about an hour. If a long batch stops with an auth error, paste a fresh token and re-run — already-applied edits stay applied and remain restorable.</p>
+      </div>
+
+      <!-- C: own client, code + PKCE -->
+      <div id="panel-code" class="panel hidden">
+        <p class="hint">Uses your own OAuth client and exchanges the code <em>in this page</em> (PKCE, no helper process). You get a refresh token, so the session survives reloads.</p>
+        <div class="grid2">
+          <label class="field">Client ID <input id="inpClientId" type="text" placeholder="1234-abc.apps.googleusercontent.com"></label>
+          <label class="field">Client secret <em>optional for Desktop clients</em> <input id="inpClientSecret" type="password" autocomplete="off"></label>
+        </div>
+        <label class="field">Redirect URI <input id="inpRedirect" type="text" placeholder="http://localhost:64834/callback"></label>
+        <label class="check"><input id="chkRememberClient" type="checkbox"> Remember this OAuth client on this device (stores the secret in localStorage)</label>
+        <div class="row">
+          <button id="btnStartCode" class="btn primary">Start sign-in</button>
+        </div>
+        <div id="codeUrlBox" class="subpanel hidden"></div>
+        <label class="field">Paste the redirected URL (or just the code) <input id="inpCode" type="text" placeholder="http://localhost:64834/callback?code=4/0A...&amp;state=..." spellcheck="false"></label>
+        <button id="btnFinishCode" class="btn">Exchange code for tokens</button>
+      </div>
+
+      <div class="card-foot">
+        <div id="authStatus" class="status"></div>
+        <label class="check"><input id="chkRememberTokens" type="checkbox" checked> Keep me signed in on this device <span class="hint">(tokens stored in localStorage — sign out to remove them)</span></label>
+      </div>
+    </section>
+
+    <!-- ============ 2. LOAD ============ -->
+    <section class="card" id="secLoad">
+      <h2><span class="step">2</span> Load videos</h2>
+      <div class="row">
+        <button id="btnLoad" class="btn primary">Load my uploads</button>
+        <span id="loadProgress" class="status"></span>
+      </div>
+      <div id="loadSummary" class="row"></div>
+      <p class="hint">Listing costs about 2 quota units per 50 videos (uploads playlist + metadata), so even a 5,000-video channel costs only ~200 units.</p>
+
+      <div class="filters">
+        <label class="field grow">Filter text <input id="fltText" type="text" placeholder="e.g. [FULL COURSE]"></label>
+        <label class="field">in <select id="fltField">
+          <option value="title">title</option>
+          <option value="description">description</option>
+          <option value="tags">tags</option>
+          <option value="id">video ID</option>
+          <option value="all">any field</option>
+        </select></label>
+        <label class="field">Privacy <select id="fltPrivacy">
+          <option value="">any</option><option value="public">public</option>
+          <option value="unlisted">unlisted</option><option value="private">private</option>
+        </select></label>
+        <label class="field">Published from <input id="fltFrom" type="date"></label>
+        <label class="field">to <input id="fltTo" type="date"></label>
+        <label class="check"><input id="chkFltRegex" type="checkbox"> regex</label>
+        <label class="check"><input id="chkFltCase" type="checkbox"> case sensitive</label>
+        <label class="check"><input id="chkFltUnedited" type="checkbox"> hide already-edited</label>
+        <button id="btnClearFilters" class="btn sm">Clear filters</button>
+        <label class="field wide">Specific video IDs or watch URLs <textarea id="fltIds" rows="2" placeholder="one per line or comma-separated" spellcheck="false"></textarea></label>
+      </div>
+    </section>
+
+    <!-- ============ 3. FIND & REPLACE ============ -->
+    <section class="card" id="secPattern">
+      <h2><span class="step">3</span> Find &amp; replace</h2>
+
+      <div class="fieldpick">
+        <span class="flabel">Apply to</span>
+        <label class="check"><input id="fldTitle" type="checkbox" checked> Title</label>
+        <label class="check"><input id="fldDescription" type="checkbox"> Description</label>
+        <label class="check"><input id="fldTags" type="checkbox"> Tags <span class="hint">(each tag edited separately)</span></label>
+      </div>
+
+      <div class="grid2">
+        <label class="field">Find <input id="patFind" type="text" placeholder="[FULL COURSE]" spellcheck="false"></label>
+        <label class="field">Replace with <input id="patReplace" type="text" placeholder="(leave empty to delete)" spellcheck="false"></label>
+      </div>
+
+      <div class="row">
+        <label class="field inline">Mode <select id="patMode">
+          <option value="literal">Literal text</option>
+          <option value="regex">Regular expression</option>
+        </select></label>
+        <label class="check"><input id="optCase" type="checkbox"> Case sensitive</label>
+        <label class="check"><input id="optWord" type="checkbox"> Whole word</label>
+        <span id="regexOpts" class="hidden">
+          <label class="field inline">Extra flags <input id="patFlags" type="text" size="6" placeholder="msu" spellcheck="false"></label>
+        </span>
+        <label class="field inline">Max per field <input id="optMax" type="number" min="0" value="0" size="4" title="0 = replace every occurrence"></label>
+        <button id="btnResetPattern" class="btn sm">Reset</button>
+      </div>
+      <p id="patternHelp" class="hint"></p>
+      <div id="patError" class="status"></div>
+
+      <div class="presets" id="presets">
+        <span class="flabel">Presets</span>
+        <button class="btn sm" data-preset="prefix" title="Type the prefix in the Find box first">Add prefix…</button>
+        <button class="btn sm" data-preset="suffix" title="Type the suffix in the Find box first">Add suffix…</button>
+        <button class="btn sm" data-preset="strip-prefix" title="Type the prefix in the Find box first">Remove prefix…</button>
+        <button class="btn sm" data-preset="strip-suffix" title="Type the suffix in the Find box first">Remove suffix…</button>
+        <button class="btn sm" data-preset="trim">Trim whitespace</button>
+        <button class="btn sm" data-preset="collapse">Collapse double spaces</button>
+        <button class="btn sm" data-preset="pipe-space">Normalize " | " spacing</button>
+        <button class="btn sm" data-preset="emoji-strip">Strip emoji</button>
+      </div>
+
+      <div class="quicktest">
+        <span class="flabel">Test the pattern</span>
+        <input id="patTestInput" type="text" placeholder="paste one title here to see what the pattern does" spellcheck="false">
+        <div id="patTestOutput" class="kvbox"></div>
+      </div>
+    </section>
+
+    <!-- ============ 4. PREVIEW ============ -->
+    <section class="card" id="secPreview">
+      <h2><span class="step">4</span> Preview <span class="hint">nothing is written until you press Apply</span></h2>
+
+      <div class="row toolbar">
+        <button id="btnSelectChanged" class="btn sm">Select all changed</button>
+        <button id="btnSelectAll" class="btn sm">Select every row</button>
+        <button id="btnSelectNone" class="btn sm">Select none</button>
+        <button id="btnInvert" class="btn sm">Invert</button>
+        <label class="check"><input id="chkChangedOnly" type="checkbox" checked> Show changed rows only</label>
+      </div>
+
+      <div id="previewSummary" class="row summary"></div>
+
+      <div class="tablewrap">
+        <table class="preview">
+          <thead>
+            <tr><th class="col-check"></th><th class="col-thumb"></th><th>Before &rarr; after</th><th class="col-state">State</th></tr>
+          </thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+
+      <div class="row pager">
+        <button id="pgPrev" class="btn sm">&larr; Prev</button>
+        <span id="pgInfo" class="hint"></span>
+        <button id="pgNext" class="btn sm">Next &rarr;</button>
+      </div>
+    </section>
+
+    <!-- ============ 5. APPLY ============ -->
+    <section class="card" id="secApply">
+      <h2><span class="step">5</span> Apply</h2>
+      <div class="row">
+        <label class="field inline">Delay between writes <input id="inpDelay" type="number" min="0" max="10000" step="50" value="400" size="5"> ms</label>
+        <label class="field inline">Daily quota <input id="inpDailyQuota" type="number" min="50" step="500" value="10000" size="7"> units</label>
+        <label class="check"><input id="chkStopOnError" type="checkbox"> Stop on first error</label>
+      </div>
+
+      <div class="row">
+        <button id="btnExportBackup" class="btn" title="Download every stored original value as JSON">Download backup</button>
+        <button id="btnApply" class="btn danger" disabled>Apply changes</button>
+        <button id="btnStop" class="btn" disabled>Stop</button>
+        <span id="applyHint" class="hint"></span>
+      </div>
+
+      <div class="progress"><div id="applyBarFill" class="progress-fill"></div></div>
+      <div id="applyProgress" class="status"></div>
+      <div id="applyLog" class="logbox"></div>
+    </section>
+
+    <!-- ============ 6. ROLLBACK ============ -->
+    <section class="card" id="secHistory">
+      <h2><span class="step">6</span> Rollback</h2>
+      <p class="hint">Every applied write stores the complete original title, description and tag list. Restoring writes those values back (50 quota units per video).</p>
+      <div class="row">
+        <button id="btnImportBackup" class="btn">Import backup file…</button>
+        <input id="fileImport" type="file" accept=".json,application/json" class="hidden">
+        <button id="btnPruneRestored" class="btn sm">Prune restored records</button>
+        <span id="storageInfo" class="hint"></span>
+      </div>
+      <div id="batchList" class="batchlist"></div>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span>Writes go directly from your browser to <code>youtube.googleapis.com</code>. No server sees your tokens except Google and, if you use local sign-in, the helper on your own machine.</span>
+  </footer>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script src="js/util.js"></script>
+<script src="js/transform.js"></script>
+<script src="js/store.js"></script>
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/demo.js"></script>
+<script src="js/ui.js"></script>
+<script>
+/* Guarded hooks, inert in normal use (no query string = no effect).
+   ?autotest=1  runs the end-to-end DOM suite in tests/autotest.js
+   ?demo=1      loads sample data with an example pattern, for a quick look */
+if (/[?&]autotest=1/.test(location.search)) {
+  var s = document.createElement('script');
+  s.src = 'tests/autotest.js';
+  document.body.appendChild(s);
+} else if (/[?&]demo=1/.test(location.search)) {
+  document.addEventListener('DOMContentLoaded', function () {
+    setTimeout(function () {
+      document.getElementById('btnDemo').click();
+      var f = document.getElementById('patFind');
+      f.value = '[2024 REMASTER] ';
+      f.dispatchEvent(new Event('input', { bubbles: true }));
+    }, 80);
+  });
+}
+</script>
+</body>
+</html>

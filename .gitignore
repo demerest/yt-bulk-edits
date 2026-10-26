@@ -1,0 +1,13 @@
+# Runtime credentials written by auth-helper.ps1 - NEVER commit these.
+# auth-config.json holds the OAuth client id + secret,
+# tokens.json holds the access + refresh token for your YouTube account.
+auth-config.json
+tokens.json
+
+# Rollback backups exported from the app (your full video-metadata history).
+yt-bulk-edits-backup-*.json
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
